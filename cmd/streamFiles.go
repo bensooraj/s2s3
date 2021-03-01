@@ -17,7 +17,12 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -37,17 +42,54 @@ type FileStreamJob struct {
 var streamFilesCmd = &cobra.Command{
 	Use:   "streamFiles",
 	Short: "A brief description of your command",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("streamFiles called")
 		var fileStreamJobs []FileStreamJob
 
 		err := viper.UnmarshalKey("file_stream_jobs", &fileStreamJobs)
 		if err != nil {
-			panic(err)
+			return err
 		}
-		for _, fileStreamJob := range fileStreamJobs {
+		for i, fileStreamJob := range fileStreamJobs {
 			fmt.Printf("Streaming file from URL %s to the S3 bucket %s\n", fileStreamJob.URL, fileStreamJob.Bucket)
+
+			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
+			if err != nil {
+				return err
+			}
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				awsConfig := aws.
+					NewConfig().
+					WithCredentials(credentials.NewStaticCredentials(
+						awsCredentials["aws_access_key_id"],
+						awsCredentials["aws_secret_access_key"],
+						"",
+					)).
+					WithRegion(awsCredentials["aws_default_region"])
+
+				sess, err := session.NewSession(awsConfig)
+				if err != nil {
+					return err
+				}
+
+				uploader := s3manager.NewUploader(sess)
+				_, err = uploader.Upload(&s3manager.UploadInput{
+					Bucket: aws.String(fileStreamJob.Bucket),
+					Key:    aws.String(fmt.Sprintf("i_%d.png", i)),
+					Body:   resp.Body,
+					// ContentType: &format,
+				})
+			}
+
 		}
+		return nil
 	},
 }
 

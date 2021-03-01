@@ -26,6 +26,7 @@ import (
 )
 
 var cfgFile string
+var awsCredentials map[string]string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -83,7 +84,7 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
 
-		awsCredentialsgo := viper.GetStringMapString("aws_credentials")
-		fmt.Println("awsCredentialsgo: ", awsCredentialsgo)
+		awsCredentials = viper.GetStringMapString("aws_credentials")
+		fmt.Println("awsCredentials: ", awsCredentials)
 	}
 }
