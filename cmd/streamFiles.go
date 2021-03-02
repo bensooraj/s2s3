@@ -42,6 +42,7 @@ type FileStreamJob struct {
 	Bucket string `mapstructure:"bucket"`
 	Folder string `mapstructure:"folder"`
 	Untar  bool   `mapstructure:"untar"`
+	JobID  int    `mapstructure:",omitempty"`
 }
 
 // streamFilesCmd represents the streamFiles command
@@ -70,6 +71,7 @@ var streamFilesCmd = &cobra.Command{
 		wg.Add(numJobs)
 		for i := 0; i < numJobs; i++ {
 			fileStreamJob := fileStreamJobs[i]
+			fileStreamJob.JobID = i
 			fileStreamJobChannel <- fileStreamJob
 		}
 
@@ -88,6 +90,7 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 			log.Println("exiting fileStreamUploader worker", workerID)
 			return
 		case fileStreamJob := <-fileStreamJobChannel:
+			log.Printf("[%d START] Completed uploading %s\n", fileStreamJob.JobID, fileStreamJob.URL)
 			log.Printf("[%d] Streaming file from URL %s to the S3 bucket %s\n", workerID, fileStreamJob.URL, fileStreamJob.Bucket)
 
 			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
@@ -140,7 +143,7 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 						header, err := tarReader.Next()
 
 						if err == io.EOF {
-							log.Printf("[DONE] EOF for %s\n", header.Name)
+							log.Printf("[%d END] EOF for %s\n", fileStreamJob.JobID, fileStreamJob.URL)
 							break
 						}
 						if err != nil {
@@ -194,6 +197,7 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 						Body:   resp.Body,
 						// ContentType: &format,
 					})
+					log.Printf("[%d END] Completed uploading %s\n", fileStreamJob.JobID, fileStreamJob.URL)
 					wg.Done()
 				}
 			}

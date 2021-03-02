@@ -1,0 +1,1 @@
+nohup s2s3 streamFiles > s2s3.out 2> s2s3.err < /dev/null &
