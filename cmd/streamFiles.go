@@ -22,11 +22,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -50,7 +49,7 @@ var streamFilesCmd = &cobra.Command{
 	Use:   "streamFiles",
 	Short: "A brief description of your command",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("streamFiles called")
+		log.Println("s2s3 streamFiles started")
 		var fileStreamJobs []FileStreamJob
 
 		err := viper.UnmarshalKey("file_stream_jobs", &fileStreamJobs)
@@ -62,39 +61,46 @@ var streamFilesCmd = &cobra.Command{
 		errorChannel := make(chan error, numberOfParallelJobs)
 		doneChannel := make(chan struct{}, 0)
 
+		var wg sync.WaitGroup
 		for i := 0; i < numberOfParallelJobs; i++ {
-			go fileStreamUploader(i, doneChannel, fileStreamJobChannel, errorChannel)
+			go fileStreamUploader(i, &wg, doneChannel, fileStreamJobChannel, errorChannel)
 		}
 
-		for i := 0; i < len(fileStreamJobs); i++ {
+		numJobs := len(fileStreamJobs)
+		wg.Add(numJobs)
+		for i := 0; i < numJobs; i++ {
 			fileStreamJob := fileStreamJobs[i]
 			fileStreamJobChannel <- fileStreamJob
 		}
 
-		signalInterrupt := make(chan os.Signal, 1)
-		signal.Notify(signalInterrupt, os.Interrupt)
-		for {
-			select {
-			case <-signalInterrupt:
+		wg.Wait()
+		close(doneChannel)
+		<-time.After(7 * time.Second)
 
-				close(doneChannel)
-				<-time.After(7 * time.Second)
-				return nil
-			}
-		}
+		// signalInterrupt := make(chan os.Signal, 1)
+		// signal.Notify(signalInterrupt, os.Interrupt)
+		// for {
+		// 	select {
+		// 	case <-signalInterrupt:
 
-		// return nil
+		// 		close(doneChannel)
+		// 		<-time.After(7 * time.Second)
+		// 		return nil
+		// 	}
+		// }
+
+		return nil
 	},
 }
 
-func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChannel <-chan FileStreamJob, errorChannel chan<- error) {
+func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan struct{}, fileStreamJobChannel <-chan FileStreamJob, errorChannel chan<- error) {
 	for {
 		select {
 		case <-doneChannel:
-			log.Println("exiting fileStreamUploader worker", cID)
+			log.Println("exiting fileStreamUploader worker", workerID)
 			return
 		case fileStreamJob := <-fileStreamJobChannel:
-			fmt.Printf("[%d] Streaming file from URL %s to the S3 bucket %s\n", cID, fileStreamJob.URL, fileStreamJob.Bucket)
+			log.Printf("[%d] Streaming file from URL %s to the S3 bucket %s\n", workerID, fileStreamJob.URL, fileStreamJob.Bucket)
 
 			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
 			if err != nil {
@@ -125,8 +131,8 @@ func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChann
 					break
 				}
 
-				fmt.Println("resp.ContentLength: ", resp.ContentLength)
-				fmt.Println("resp.Header: ", resp.Header)
+				log.Println("resp.ContentLength: ", resp.ContentLength)
+				log.Println("resp.Header: ", resp.Header)
 
 				uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
 					u.Concurrency = 5
@@ -146,7 +152,7 @@ func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChann
 						header, err := tarReader.Next()
 
 						if err == io.EOF {
-							fmt.Println("Done with files")
+							log.Println("Done with files")
 							break
 						}
 						if err != nil {
@@ -184,6 +190,7 @@ func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChann
 							log.Fatalf("ExtractTarGz: uknown type: %v in %s", header.Typeflag, header.Name)
 						}
 					}
+					wg.Done()
 				} else {
 					var keyName string
 					fileName := path.Base(fileStreamJob.URL)
@@ -199,8 +206,8 @@ func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChann
 						Body:   resp.Body,
 						// ContentType: &format,
 					})
+					wg.Done()
 				}
-
 			}
 		}
 	}
