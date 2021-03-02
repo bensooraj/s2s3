@@ -214,6 +214,10 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 					log.Printf("[%d END] Completed uploading %s\n", fileStreamJob.JobID, fileStreamJob.URL)
 					wg.Done()
 				}
+			} else {
+				errorChannel <- fmt.Errorf("%d::%s", resp.StatusCode, resp.Status)
+				log.Printf("[%d END] %d::%s Error uploading %s\n", fileStreamJob.JobID, resp.StatusCode, resp.Status, fileStreamJob.URL)
+				wg.Done()
 			}
 		}
 	}

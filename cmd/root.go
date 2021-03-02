@@ -27,7 +27,7 @@ import (
 
 const (
 	// VERSION of the CLI
-	VERSION = "v0.02"
+	VERSION = "v0.03"
 )
 
 var cfgFile string
