@@ -1,1 +1,8 @@
 nohup s2s3 streamFiles > s2s3.out 2> s2s3.err < /dev/null &
+
+nohup ./s2s3 streamFiles > s2s3.out 2> s2s3.err < /dev/null &
+
+PID: 20223
+
+renice -n -12 -p 20223
+ps -p 20223 -o %cpu,%mem,cmd

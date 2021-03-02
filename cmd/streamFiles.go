@@ -18,6 +18,7 @@ package cmd
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -67,6 +68,19 @@ var streamFilesCmd = &cobra.Command{
 			go fileStreamUploader(i, &wg, doneChannel, fileStreamJobChannel, errorChannel)
 		}
 
+		errorChannel <- errors.New("Test Error")
+		go func() {
+			for {
+				select {
+				case <-doneChannel:
+					log.Println("[CLEANUP] Exiting error logger routine")
+					return
+				case err := <-errorChannel:
+					log.Println("[ERROR] ", err)
+				}
+			}
+		}()
+
 		numJobs := len(fileStreamJobs)
 		wg.Add(numJobs)
 		for i := 0; i < numJobs; i++ {
@@ -87,10 +101,10 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 	for {
 		select {
 		case <-doneChannel:
-			log.Println("exiting fileStreamUploader worker", workerID)
+			log.Println("[CLEANUP] Exiting fileStreamUploader worker", workerID)
 			return
 		case fileStreamJob := <-fileStreamJobChannel:
-			log.Printf("[%d START] Completed uploading %s\n", fileStreamJob.JobID, fileStreamJob.URL)
+			log.Printf("[%d START] Started uploading %s\n", fileStreamJob.JobID, fileStreamJob.URL)
 			log.Printf("[%d] Streaming file from URL %s to the S3 bucket %s\n", workerID, fileStreamJob.URL, fileStreamJob.Bucket)
 
 			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
