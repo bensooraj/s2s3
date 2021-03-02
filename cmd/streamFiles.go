@@ -31,6 +31,7 @@ import (
 type FileStreamJob struct {
 	URL    string `mapstructure:"url"`
 	Bucket string `mapstructure:"bucket"`
+	Folder string `mapstructure:"folder"`
 }
 
 // // FileStreamJobs .
@@ -79,10 +80,21 @@ var streamFilesCmd = &cobra.Command{
 					return err
 				}
 
-				uploader := s3manager.NewUploader(sess)
+				fmt.Println("resp.ContentLength: ", resp.ContentLength)
+				fmt.Println("resp.Header: ", resp.Header)
+
+				uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
+					u.Concurrency = 5
+					u.PartSize = 10 * 1024 * 1024 // The minimum/default allowed part size is 5MB
+				})
+
+				var keyName string
+				if fileStreamJob.Folder != "" {
+					keyName = fmt.Sprintf("%s/i_%d.png", fileStreamJob.Folder, i)
+				}
 				_, err = uploader.Upload(&s3manager.UploadInput{
 					Bucket: aws.String(fileStreamJob.Bucket),
-					Key:    aws.String(fmt.Sprintf("i_%d.png", i)),
+					Key:    aws.String(keyName),
 					Body:   resp.Body,
 					// ContentType: &format,
 				})
