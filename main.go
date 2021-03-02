@@ -18,5 +18,5 @@ package main
 import "github.com/bensooraj/s2s3/cmd"
 
 func main() {
-  cmd.Execute()
+	cmd.Execute()
 }

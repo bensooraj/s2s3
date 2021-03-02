@@ -25,6 +25,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	// VERSION of the CLI
+	VERSION = "v0.01"
+)
+
 var cfgFile string
 var awsCredentials map[string]string
 var numberOfParallelJobs int
