@@ -22,8 +22,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -41,11 +45,6 @@ type FileStreamJob struct {
 	Untar  bool   `mapstructure:"untar"`
 }
 
-// // FileStreamJobs .
-// type FileStreamJobs struct {
-
-// }
-
 // streamFilesCmd represents the streamFiles command
 var streamFilesCmd = &cobra.Command{
 	Use:   "streamFiles",
@@ -58,20 +57,55 @@ var streamFilesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		for i, fileStreamJob := range fileStreamJobs {
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Printf("Streaming file from URL %s to the S3 bucket %s\n", fileStreamJob.URL, fileStreamJob.Bucket)
+
+		fileStreamJobChannel := make(chan FileStreamJob, numberOfParallelJobs)
+		errorChannel := make(chan error, numberOfParallelJobs)
+		doneChannel := make(chan struct{}, 0)
+
+		for i := 0; i < numberOfParallelJobs; i++ {
+			go fileStreamUploader(i, doneChannel, fileStreamJobChannel, errorChannel)
+		}
+
+		for i := 0; i < len(fileStreamJobs); i++ {
+			fileStreamJob := fileStreamJobs[i]
+			fileStreamJobChannel <- fileStreamJob
+		}
+
+		signalInterrupt := make(chan os.Signal, 1)
+		signal.Notify(signalInterrupt, os.Interrupt)
+		for {
+			select {
+			case <-signalInterrupt:
+
+				close(doneChannel)
+				<-time.After(7 * time.Second)
+				return nil
+			}
+		}
+
+		// return nil
+	},
+}
+
+func fileStreamUploader(cID int, doneChannel <-chan struct{}, fileStreamJobChannel <-chan FileStreamJob, errorChannel chan<- error) {
+	for {
+		select {
+		case <-doneChannel:
+			log.Println("exiting fileStreamUploader worker", cID)
+			return
+		case fileStreamJob := <-fileStreamJobChannel:
+			fmt.Printf("[%d] Streaming file from URL %s to the S3 bucket %s\n", cID, fileStreamJob.URL, fileStreamJob.Bucket)
 
 			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
 			if err != nil {
-				return err
+				errorChannel <- err
+				break
 			}
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			if err != nil {
-				return err
+				errorChannel <- err
+				break
 			}
 			defer resp.Body.Close()
 
@@ -87,7 +121,8 @@ var streamFilesCmd = &cobra.Command{
 
 				sess, err := session.NewSession(awsConfig)
 				if err != nil {
-					return err
+					errorChannel <- err
+					break
 				}
 
 				fmt.Println("resp.ContentLength: ", resp.ContentLength)
@@ -102,7 +137,8 @@ var streamFilesCmd = &cobra.Command{
 					uncompressedGzipStream, err := gzip.NewReader(resp.Body)
 					if err != nil {
 						log.Fatal("gzip: NewReader failed: ", err)
-						return err
+						errorChannel <- err
+						break
 					}
 					// https://filebin.net/1vu3jjqj4cker991/prku_0307.tar.gz?t=korc1n0e
 					tarReader := tar.NewReader(uncompressedGzipStream)
@@ -115,7 +151,8 @@ var streamFilesCmd = &cobra.Command{
 						}
 						if err != nil {
 							log.Fatal("tar: Next seek failed", err)
-							return err
+							errorChannel <- err
+							break
 						}
 
 						switch header.Typeflag {
@@ -132,9 +169,9 @@ var streamFilesCmd = &cobra.Command{
 
 							var keyName string
 							if fileStreamJob.Folder != "" {
-								keyName = fmt.Sprintf("%s/i_%s%s", fileStreamJob.Folder, fileName, fileExtension)
+								keyName = fmt.Sprintf("%s/%s%s", fileStreamJob.Folder, fileName, fileExtension)
 							} else {
-								keyName = fmt.Sprintf("i_%s%s", fileName, fileExtension)
+								keyName = fmt.Sprintf("%s%s", fileName, fileExtension)
 							}
 							_, err = uploader.Upload(&s3manager.UploadInput{
 								Bucket: aws.String(fileStreamJob.Bucket),
@@ -145,13 +182,16 @@ var streamFilesCmd = &cobra.Command{
 
 						default:
 							log.Fatalf("ExtractTarGz: uknown type: %v in %s", header.Typeflag, header.Name)
-
 						}
 					}
 				} else {
 					var keyName string
+					fileName := path.Base(fileStreamJob.URL)
+
 					if fileStreamJob.Folder != "" {
-						keyName = fmt.Sprintf("%s/i_%d.png", fileStreamJob.Folder, i)
+						keyName = fmt.Sprintf("%s/%s", fileStreamJob.Folder, fileName)
+					} else {
+						keyName = fmt.Sprintf("%s", fileName)
 					}
 					_, err = uploader.Upload(&s3manager.UploadInput{
 						Bucket: aws.String(fileStreamJob.Bucket),
@@ -163,8 +203,8 @@ var streamFilesCmd = &cobra.Command{
 
 			}
 		}
-		return nil
-	},
+	}
+
 }
 
 func init() {

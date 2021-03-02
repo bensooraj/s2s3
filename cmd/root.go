@@ -27,6 +27,7 @@ import (
 
 var cfgFile string
 var awsCredentials map[string]string
+var numberOfParallelJobs int
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -86,5 +87,8 @@ func initConfig() {
 
 		awsCredentials = viper.GetStringMapString("aws_credentials")
 		fmt.Println("awsCredentials: ", awsCredentials)
+
+		numberOfParallelJobs = viper.GetInt("config.number_of_parallel_jobs")
+		fmt.Println("numberOfParallelJobs: ", numberOfParallelJobs)
 	}
 }
