@@ -16,8 +16,14 @@ limitations under the License.
 package cmd
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -32,6 +38,7 @@ type FileStreamJob struct {
 	URL    string `mapstructure:"url"`
 	Bucket string `mapstructure:"bucket"`
 	Folder string `mapstructure:"folder"`
+	Untar  bool   `mapstructure:"untar"`
 }
 
 // // FileStreamJobs .
@@ -52,6 +59,9 @@ var streamFilesCmd = &cobra.Command{
 			return err
 		}
 		for i, fileStreamJob := range fileStreamJobs {
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
 			fmt.Printf("Streaming file from URL %s to the S3 bucket %s\n", fileStreamJob.URL, fileStreamJob.Bucket)
 
 			req, err := http.NewRequest("GET", fileStreamJob.URL, nil)
@@ -88,18 +98,70 @@ var streamFilesCmd = &cobra.Command{
 					u.PartSize = 10 * 1024 * 1024 // The minimum/default allowed part size is 5MB
 				})
 
-				var keyName string
-				if fileStreamJob.Folder != "" {
-					keyName = fmt.Sprintf("%s/i_%d.png", fileStreamJob.Folder, i)
-				}
-				_, err = uploader.Upload(&s3manager.UploadInput{
-					Bucket: aws.String(fileStreamJob.Bucket),
-					Key:    aws.String(keyName),
-					Body:   resp.Body,
-					// ContentType: &format,
-				})
-			}
+				if fileStreamJob.Untar {
+					uncompressedGzipStream, err := gzip.NewReader(resp.Body)
+					if err != nil {
+						log.Fatal("gzip: NewReader failed: ", err)
+						return err
+					}
+					// https://filebin.net/1vu3jjqj4cker991/prku_0307.tar.gz?t=korc1n0e
+					tarReader := tar.NewReader(uncompressedGzipStream)
+					for {
+						header, err := tarReader.Next()
 
+						if err == io.EOF {
+							fmt.Println("Done with files")
+							break
+						}
+						if err != nil {
+							log.Fatal("tar: Next seek failed", err)
+							return err
+						}
+
+						switch header.Typeflag {
+						case tar.TypeDir:
+							// No action for now
+							log.Println("Directory found. Skipping.")
+
+						case tar.TypeReg:
+
+							fileName := strings.TrimSuffix(header.Name, filepath.Ext(header.Name))
+							fileExtension := filepath.Ext(header.Name)
+							log.Println("Header file name: ", fileName)
+							log.Println("Header file extension: ", fileExtension)
+
+							var keyName string
+							if fileStreamJob.Folder != "" {
+								keyName = fmt.Sprintf("%s/i_%s%s", fileStreamJob.Folder, fileName, fileExtension)
+							} else {
+								keyName = fmt.Sprintf("i_%s%s", fileName, fileExtension)
+							}
+							_, err = uploader.Upload(&s3manager.UploadInput{
+								Bucket: aws.String(fileStreamJob.Bucket),
+								Key:    aws.String(keyName),
+								Body:   tarReader,
+								// ContentType: &format,
+							})
+
+						default:
+							log.Fatalf("ExtractTarGz: uknown type: %v in %s", header.Typeflag, header.Name)
+
+						}
+					}
+				} else {
+					var keyName string
+					if fileStreamJob.Folder != "" {
+						keyName = fmt.Sprintf("%s/i_%d.png", fileStreamJob.Folder, i)
+					}
+					_, err = uploader.Upload(&s3manager.UploadInput{
+						Bucket: aws.String(fileStreamJob.Bucket),
+						Key:    aws.String(keyName),
+						Body:   resp.Body,
+						// ContentType: &format,
+					})
+				}
+
+			}
 		}
 		return nil
 	},
