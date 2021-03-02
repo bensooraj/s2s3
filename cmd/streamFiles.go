@@ -77,18 +77,6 @@ var streamFilesCmd = &cobra.Command{
 		close(doneChannel)
 		<-time.After(7 * time.Second)
 
-		// signalInterrupt := make(chan os.Signal, 1)
-		// signal.Notify(signalInterrupt, os.Interrupt)
-		// for {
-		// 	select {
-		// 	case <-signalInterrupt:
-
-		// 		close(doneChannel)
-		// 		<-time.After(7 * time.Second)
-		// 		return nil
-		// 	}
-		// }
-
 		return nil
 	},
 }
@@ -152,7 +140,7 @@ func fileStreamUploader(workerID int, wg *sync.WaitGroup, doneChannel <-chan str
 						header, err := tarReader.Next()
 
 						if err == io.EOF {
-							log.Println("Done with files")
+							log.Printf("[DONE] EOF for %s\n", header.Name)
 							break
 						}
 						if err != nil {
